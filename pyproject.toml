@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hindsight-ext-acl"
-version = "0.1.0"
+version = "0.1.1"
 description = "Identity-based access control for self-hosted Hindsight: one key per identity, implicit own space, and per-bank grants (r / rw / tag) from a single YAML file."
 readme = "README.md"
 license = { text = "MIT" }

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1 — 2026-10-22
+
+- Decision log: one `acl: identity=… op=… bank=… access=… result=…` line per decision, logger `hindsight_ext_acl`. `HINDSIGHT_API_OPERATION_VALIDATOR_LOG` = `all` (default) / `denied` / `off`.
+
 ## 0.1.0 — 2026-10-22
 
 - First release, tested against Hindsight 1.1.0.

@@ -48,6 +48,8 @@ ROOT_KEY_MIN_LENGTH = 32
 _TRUE = ("true", "1", "yes")
 
 # Precheck operations (PrecheckOperation values) that write or spend LLM tokens.
+_LOG_MODES = frozenset({"all", "denied", "off"})
+
 _PRECHECK_WRITES = frozenset({"retain", "files_retain", "mental_model_create", "mental_model_refresh"})
 
 
@@ -115,12 +117,41 @@ class AclTenantExtension(TenantExtension):
 
 
 class AclValidator(OperationValidatorExtension):
-    """Enforces access.yaml. Reads the file named by HINDSIGHT_API_TENANT_ACCESS_FILE."""
+    """Enforces access.yaml. Reads the file named by HINDSIGHT_API_TENANT_ACCESS_FILE.
+
+    ``HINDSIGHT_API_OPERATION_VALIDATOR_LOG``: ``all`` (default) logs one line per
+    decision, ``denied`` only refusals, ``off`` nothing.
+    """
 
     def __init__(self, config: dict[str, str]):
         super().__init__(config)
         _refuse_mcp_bypass()
         self._access: AccessConfig = get_config()
+        mode = (config.get("log") or "all").lower()
+        if mode not in _LOG_MODES:
+            raise ValueError(f"HINDSIGHT_API_OPERATION_VALIDATOR_LOG must be one of {sorted(_LOG_MODES)}")
+        self._log_mode = mode
+
+    # -- decision log ----------------------------------------------------------------
+
+    def _log(
+        self, op: str, bank_id: str, rc: RequestContext | None, result: ValidationResult, *, log_allow: bool = True
+    ) -> ValidationResult:
+        """One line per decision for callers with an identity (background work is not logged)."""
+        if self._log_mode == "off" or rc is None or rc.internal or rc.tenant_id is None:
+            return result
+        if result.allowed and (self._log_mode == "denied" or not log_allow):
+            return result
+        level = self._level(bank_id, rc)
+        access = "all" if level is None else level.label()
+        if result.allowed:
+            logger.info("acl: identity=%s op=%s bank=%s access=%s result=allow", rc.tenant_id, op, bank_id, access)
+        else:
+            logger.info(
+                "acl: identity=%s op=%s bank=%s access=%s result=deny status=%s reason=%r",
+                rc.tenant_id, op, bank_id, access, result.status_code, result.reason,
+            )
+        return result
 
     # -- identity / level ----------------------------------------------------------
 
@@ -174,7 +205,7 @@ class AclValidator(OperationValidatorExtension):
 
     # -- pre-body check --------------------------------------------------------------
 
-    async def precheck(self, ctx: PrecheckContext) -> ValidationResult:
+    async def _precheck(self, ctx: PrecheckContext) -> ValidationResult:
         level = self._level(ctx.bank_id, ctx.request_context)
         if level is None:
             return ValidationResult.accept()
@@ -186,7 +217,7 @@ class AclValidator(OperationValidatorExtension):
 
     # -- core operations ---------------------------------------------------------------
 
-    async def validate_retain(self, ctx: RetainContext) -> ValidationResult:
+    async def _validate_retain(self, ctx: RetainContext) -> ValidationResult:
         level = self._level(ctx.bank_id, ctx.request_context)
         if level is None or level is Access.RW:
             return ValidationResult.accept()
@@ -197,10 +228,10 @@ class AclValidator(OperationValidatorExtension):
             return self._not_found(ctx.bank_id)
         return self._forbidden(ctx.bank_id, "read-only ('r') access")
 
-    async def validate_recall(self, ctx: RecallContext) -> ValidationResult:
+    async def _validate_recall(self, ctx: RecallContext) -> ValidationResult:
         return self._read(ctx.bank_id, ctx.request_context)
 
-    async def validate_reflect(self, ctx: ReflectContext) -> ValidationResult:
+    async def _validate_reflect(self, ctx: ReflectContext) -> ValidationResult:
         return self._read(ctx.bank_id, ctx.request_context)
 
     # validate_consolidate is left at the default (accept): consolidation follows a
@@ -216,13 +247,13 @@ class AclValidator(OperationValidatorExtension):
 
     # -- mental models / curation / import ----------------------------------------------
 
-    async def validate_mental_model_get(self, ctx: MentalModelGetContext) -> ValidationResult:
+    async def _validate_mental_model_get(self, ctx: MentalModelGetContext) -> ValidationResult:
         return self._read(ctx.bank_id, ctx.request_context)
 
-    async def validate_mental_model_refresh(self, ctx: MentalModelRefreshContext) -> ValidationResult:
+    async def _validate_mental_model_refresh(self, ctx: MentalModelRefreshContext) -> ValidationResult:
         return self._write_full(ctx.bank_id, ctx.request_context)
 
-    async def validate_memory_update(self, ctx: MemoryUpdateContext) -> ValidationResult:
+    async def _validate_memory_update(self, ctx: MemoryUpdateContext) -> ValidationResult:
         level = self._level(ctx.bank_id, ctx.request_context)
         if level is None or level >= Access.TAG:
             # 'tag': Hindsight's write tag scope limits it to items carrying its own tag.
@@ -231,12 +262,12 @@ class AclValidator(OperationValidatorExtension):
             return self._not_found(ctx.bank_id)
         return self._forbidden(ctx.bank_id, "read-only ('r') access")
 
-    async def validate_import(self, ctx: ImportContext) -> ValidationResult:
+    async def _validate_import(self, ctx: ImportContext) -> ValidationResult:
         return self._write_full(ctx.bank_id, ctx.request_context)
 
     # -- bank management -------------------------------------------------------------------
 
-    async def validate_bank_read(self, ctx: BankReadContext) -> ValidationResult:
+    async def _validate_bank_read(self, ctx: BankReadContext) -> ValidationResult:
         level = self._level(ctx.bank_id, ctx.request_context)
         if level is None or can_read_op(level, str(ctx.operation)):
             return ValidationResult.accept()
@@ -244,7 +275,7 @@ class AclValidator(OperationValidatorExtension):
             return self._not_found(ctx.bank_id)
         return self._forbidden(ctx.bank_id, f"'{ctx.operation}' needs 'rw'")
 
-    async def validate_bank_write(self, ctx: BankWriteContext) -> ValidationResult:
+    async def _validate_bank_write(self, ctx: BankWriteContext) -> ValidationResult:
         level = self._level(ctx.bank_id, ctx.request_context)
         if level is None or can_write_op(level, str(ctx.operation)):
             return ValidationResult.accept()
@@ -252,7 +283,7 @@ class AclValidator(OperationValidatorExtension):
             return self._not_found(ctx.bank_id)
         return self._forbidden(ctx.bank_id, f"'{ctx.operation}' not allowed with '{level.label()}' access")
 
-    async def validate_create_bank(self, ctx: CreateBankContext) -> ValidationResult:
+    async def _validate_create_bank(self, ctx: CreateBankContext) -> ValidationResult:
         level = self._level(ctx.bank_id, ctx.request_context)
         if level is None or level is Access.RW:
             return ValidationResult.accept()
@@ -264,6 +295,8 @@ class AclValidator(OperationValidatorExtension):
     async def bank_list_scope(self, request_context: RequestContext) -> BankListScope | None:
         who = self._identity(request_context)
         if who is None or who == ROOT_ID or (isinstance(who, Identity) and who.admin):
+            if who is not None and self._log_mode == "all":
+                logger.info("acl: identity=%s op=list_banks result=allow scope=all", request_context.tenant_id)
             return BankListScope()  # every bank
         return None  # filter_bank_list decides per bank
 
@@ -271,7 +304,48 @@ class AclValidator(OperationValidatorExtension):
         who = self._identity(ctx.request_context)
         if not isinstance(who, Identity):
             return BankListResult(banks=[] if who is _UNKNOWN else ctx.banks)
-        return BankListResult(banks=[b for b in ctx.banks if access_for(who, str(b.get("bank_id"))) >= Access.R])
+        visible = [b for b in ctx.banks if access_for(who, str(b.get("bank_id"))) >= Access.R]
+        if self._log_mode == "all":
+            logger.info(
+                "acl: identity=%s op=list_banks result=allow visible=%d of=%d", who.id, len(visible), len(ctx.banks)
+            )
+        return BankListResult(banks=visible)
+
+
+    # -- public hooks: decide, then log ----------------------------------------------
+
+    async def precheck(self, ctx: PrecheckContext) -> ValidationResult:
+        return self._log(str(ctx.operation), ctx.bank_id, ctx.request_context, await self._precheck(ctx), log_allow=False)
+
+    async def validate_retain(self, ctx: RetainContext) -> ValidationResult:
+        return self._log("retain", ctx.bank_id, ctx.request_context, await self._validate_retain(ctx))
+
+    async def validate_recall(self, ctx: RecallContext) -> ValidationResult:
+        return self._log("recall", ctx.bank_id, ctx.request_context, await self._validate_recall(ctx))
+
+    async def validate_reflect(self, ctx: ReflectContext) -> ValidationResult:
+        return self._log("reflect", ctx.bank_id, ctx.request_context, await self._validate_reflect(ctx))
+
+    async def validate_mental_model_get(self, ctx: MentalModelGetContext) -> ValidationResult:
+        return self._log("mental_model_get", ctx.bank_id, ctx.request_context, await self._validate_mental_model_get(ctx))
+
+    async def validate_mental_model_refresh(self, ctx: MentalModelRefreshContext) -> ValidationResult:
+        return self._log("mental_model_refresh", ctx.bank_id, ctx.request_context, await self._validate_mental_model_refresh(ctx))
+
+    async def validate_memory_update(self, ctx: MemoryUpdateContext) -> ValidationResult:
+        return self._log("memory_update", ctx.bank_id, ctx.request_context, await self._validate_memory_update(ctx))
+
+    async def validate_import(self, ctx: ImportContext) -> ValidationResult:
+        return self._log("import", ctx.bank_id, ctx.request_context, await self._validate_import(ctx))
+
+    async def validate_bank_read(self, ctx: BankReadContext) -> ValidationResult:
+        return self._log(str(ctx.operation), ctx.bank_id, ctx.request_context, await self._validate_bank_read(ctx))
+
+    async def validate_bank_write(self, ctx: BankWriteContext) -> ValidationResult:
+        return self._log(str(ctx.operation), ctx.bank_id, ctx.request_context, await self._validate_bank_write(ctx))
+
+    async def validate_create_bank(self, ctx: CreateBankContext) -> ValidationResult:
+        return self._log("create_bank", ctx.bank_id, ctx.request_context, await self._validate_create_bank(ctx))
 
 
 class _Unknown:

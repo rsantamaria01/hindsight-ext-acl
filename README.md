@@ -115,6 +115,19 @@ HINDSIGHT_CP_ACCESS_KEY=<root key>
 HINDSIGHT_CP_DATAPLANE_API_KEY=<root key>
 ```
 
+Decision log (validator environment):
+
+```bash
+HINDSIGHT_API_OPERATION_VALIDATOR_LOG=all     # default: one line per decision; or "denied", or "off"
+```
+
+```
+acl: identity=rsantamaria op=recall bank=hsm-infra access=rw result=allow
+acl: identity=bob op=recall bank=team-infra access=none result=deny status=404 reason="Bank 'team-infra' not found"
+```
+
+Background work (consolidation, scheduled refreshes) is not logged. A queued retain is logged twice: once when it is submitted, and again when the worker runs it.
+
 The extension refuses to start if `HINDSIGHT_API_MCP_AUTH_TOKEN` is set (that variable bypasses tenant auth on MCP) or if `HINDSIGHT_API_TENANT_MCP_AUTH_DISABLED` is true. Give API and worker processes the same variables.
 
 ## CLI

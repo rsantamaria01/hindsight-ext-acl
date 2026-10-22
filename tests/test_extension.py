@@ -225,3 +225,39 @@ async def test_removed_identity_is_denied(validator):
     assert denied(await validator.validate_recall(RecallContext(bank_id="team-infra", query="q", request_context=stale)), 404)
     result = await validator.filter_bank_list(BankListContext(banks=[{"bank_id": "team-infra"}], request_context=stale))
     assert result.banks == []
+
+
+# -- decision log -------------------------------------------------------------------
+
+
+async def test_decision_log(tenant, validator, caplog):
+    caplog.set_level("INFO", logger="hindsight_ext_acl")
+    bob = await ctx_for(tenant, "k-bob")
+    await validator.validate_recall(RecallContext(bank_id="usr-bob-x", query="q", request_context=bob))
+    await validator.validate_recall(RecallContext(bank_id="team-infra", query="q", request_context=bob))
+    await validator.validate_recall(RecallContext(bank_id="x", query="q", request_context=RequestContext(internal=True)))
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("acl:")]
+    assert lines[0] == "acl: identity=bob op=recall bank=usr-bob-x access=rw result=allow"
+    assert lines[1].startswith("acl: identity=bob op=recall bank=team-infra access=none result=deny status=404")
+    assert len(lines) == 2  # background work is not logged
+
+
+async def test_decision_log_modes(env, tenant, caplog):
+    caplog.set_level("INFO", logger="hindsight_ext_acl")
+    bob = await ctx_for(tenant, "k-bob")
+    denied_only = AclValidator({"log": "denied"})
+    await denied_only.validate_recall(RecallContext(bank_id="usr-bob-x", query="q", request_context=bob))
+    await denied_only.validate_recall(RecallContext(bank_id="team-infra", query="q", request_context=bob))
+    off = AclValidator({"log": "off"})
+    await off.validate_recall(RecallContext(bank_id="team-infra", query="q", request_context=bob))
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("acl:")]
+    assert len(lines) == 1 and "result=deny" in lines[0]
+    with pytest.raises(ValueError, match="OPERATION_VALIDATOR_LOG"):
+        AclValidator({"log": "verbose"})
+
+
+async def test_bank_list_log(tenant, validator, caplog):
+    caplog.set_level("INFO", logger="hindsight_ext_acl")
+    oc = await ctx_for(tenant, "k-oc")
+    await validator.filter_bank_list(BankListContext(banks=[{"bank_id": "team-infra"}, {"bank_id": "x"}], request_context=oc))
+    assert "acl: identity=oc_dev01 op=list_banks result=allow visible=1 of=2" in caplog.text
