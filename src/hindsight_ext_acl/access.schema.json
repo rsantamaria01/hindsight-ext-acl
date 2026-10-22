@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rsantamaria01/hindsight-ext-acl/main/src/hindsight_ext_acl/access.schema.json",
+  "title": "hindsight-ext-acl access file",
+  "description": "Identities, their keys and their bank access for the hindsight-ext-acl Hindsight extension. Cross-field rules (unique keys, unique prefixes, identity type must be declared, 'root' reserved) are checked by `hindsight-acl check`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "identities"],
+  "properties": {
+    "version": {
+      "description": "Access file format version.",
+      "const": 1
+    },
+    "types": {
+      "description": "Identity types and their own-space prefix. Optional; when omitted: user -> usr, agent -> agn. When present it replaces the defaults.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/id" },
+      "additionalProperties": {
+        "type": ["object", "null"],
+        "additionalProperties": false,
+        "properties": {
+          "prefix": {
+            "description": "Own space is '<prefix>-<id>-*'. Omit for a type with no own space.",
+            "type": "string",
+            "pattern": "^[a-z0-9]{1,16}$"
+          }
+        }
+      }
+    },
+    "identities": {
+      "description": "One entry per key holder: a person, or one agent runtime instance (an OpenClaw gateway, an OpenCode install).",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/id", "not": { "const": "root" } },
+      "additionalProperties": { "$ref": "#/$defs/identity" }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_]{0,47}$"
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "key_sha256"],
+      "properties": {
+        "type": {
+          "description": "A type declared under 'types' (default: user or agent).",
+          "$ref": "#/$defs/id"
+        },
+        "admin": {
+          "description": "Full access to every bank over API and MCP.",
+          "type": "boolean",
+          "default": false
+        },
+        "runtime": {
+          "description": "Optional. Changes the write tag to '<type>:<runtime>:<id>'.",
+          "$ref": "#/$defs/id"
+        },
+        "description": {
+          "type": "string"
+        },
+        "key_sha256": {
+          "description": "sha256 hex of the identity's key (hindsight-acl keygen). Never the key itself.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "grants": {
+          "description": "Access to banks outside the identity's own space. Highest matching level wins.",
+          "type": ["array", "null"],
+          "items": { "$ref": "#/$defs/grant" }
+        }
+      }
+    },
+    "grant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["banks", "access"],
+      "properties": {
+        "banks": {
+          "description": "Bank ids or shell-style glob patterns (hsm-infra, sanomed-*).",
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "pattern": "^\\S{1,200}$" }
+        },
+        "access": {
+          "description": "r = read; tag = read + write only with the identity's tag; rw = read + write + manage.",
+          "enum": ["r", "tag", "rw"]
+        }
+      }
+    }
+  }
+}

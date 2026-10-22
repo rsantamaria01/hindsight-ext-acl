@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hindsight-ext-acl"
+version = "0.1.0"
+description = "Identity-based access control for self-hosted Hindsight: one key per identity, implicit own space, and per-bank grants (r / rw / tag) from a single YAML file."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Raul Santamaria" }]
+requires-python = ">=3.11"
+# hindsight-api (or hindsight-api-slim) is deliberately NOT a dependency: the
+# extension runs inside the Hindsight server's own environment and must not
+# pull or upgrade the server. PyYAML ships with the server already.
+dependencies = ["PyYAML>=6.0"]
+keywords = ["hindsight", "agent-memory", "acl", "multi-user", "mcp"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "pytest-asyncio>=0.23", "jsonschema>=4.21", "hindsight-api-slim>=1.1.0"]
+
+[project.scripts]
+hindsight-acl = "hindsight_ext_acl.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/rsantamaria01/hindsight-ext-acl"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+hindsight_ext_acl = ["access.schema.json"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -1,0 +1,51 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rsantamaria01/hindsight-ext-acl/main/src/hindsight_ext_acl/access.schema.json
+#
+# hindsight-ext-acl access file. Copy to /etc/hindsight/access.yaml (0640, readable
+# by the Hindsight service user). Validate before restarting Hindsight:
+#
+#   hindsight-acl check /etc/hindsight/access.yaml
+#
+# Keys are never stored here, only their sha256 (`hindsight-acl keygen`).
+# The hashes below belong to the throwaway keys "example-key-<id>"; replace them.
+
+version: 1
+
+# Optional. These are the defaults; defining `types` replaces them.
+# Own space of an identity = "<prefix>-<id>-*": read, write, manage and create
+# banks there, with no grant needed (e.g. usr-bob-general, usr-bob-budget2027).
+# types:
+#   user:  { prefix: usr }
+#   agent: { prefix: agn }
+
+identities:
+
+  alice:
+    type: user
+    admin: true                  # every bank over API/MCP (the UI uses the root key)
+    description: IT lead
+    key_sha256: "457c6a6848a0bbde7277ab01d5b82d9dbd88e96ca457819589954be69b69b1ad"
+
+  bob:
+    type: user
+    description: General manager
+    key_sha256: "06278711905e2e21353ab0bc7546c4fad84b7cb0fea44e0ecf12b08434947050"
+    # No grants: sees only his own space usr-bob-*.
+
+  openclaw:                      # one OpenClaw gateway; all its agents share this key
+    type: agent
+    runtime: openclaw            # write tag agent:openclaw:openclaw
+    description: OpenClaw gateway (agents separated by bank with agentBankMap)
+    key_sha256: "523f3c49280946d5763ce4c08e18059d71d069c76fd6bbeb1969995af976fdd1"
+    grants:
+      - banks: [team-infra]
+        access: tag              # reads the whole bank, writes only tagged agent:openclaw:openclaw
+
+  oc_dev01:                      # OpenCode install on host dev01
+    type: agent
+    runtime: opencode
+    key_sha256: "a95ff8020fe3dfaaf6307922e63f7734bad3e535cb41e8e9df7c92a238f12f90"
+    grants:
+      - banks: [team-infra]
+        access: r                # knows the current state, cannot change it
+      - banks: [docs-*]
+        access: r
